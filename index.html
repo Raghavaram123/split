@@ -4,26 +4,21 @@
 <meta charset="UTF-8">
 <title>Expense Split App</title>
 
-<!-- Firebase SDKs -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-
-<!-- PDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
-body { font-family: Arial; background:#f4f6f8 }
+body { font-family: Arial, sans-serif; background:#f4f6f8; }
 .container { max-width:1000px; margin:auto; background:white; padding:20px; margin-top:25px; border-radius:8px }
-input, button { width:100%; padding:8px; margin-top:6px }
+input, select, button { width:100%; padding:8px; margin-top:6px }
 button { background:#2563eb; color:white; border:none; cursor:pointer }
 button:hover { background:#1e40af }
 .hidden { display:none }
 table { width:100%; border-collapse:collapse; margin-top:15px }
 th, td { border:1px solid #ccc; padding:8px; text-align:center }
-.audit { font-size:13px; color:#555 }
-.logout { background:#999; float:right }
 .info { background:#eef; padding:10px; border-radius:6px }
+.audit { font-size:13px; color:#555 }
+.logout { background:#999 }
+.member-tag { display:inline-block; background:#ddd; padding:4px 8px; margin:3px; border-radius:4px }
 </style>
 </head>
 
@@ -32,18 +27,18 @@ th, td { border:1px solid #ccc; padding:8px; text-align:center }
 <!-- LOGIN -->
 <div class="container" id="loginBox">
   <h2>Login</h2>
-  <input id="email" placeholder="Email">
-  <input id="password" type="password" placeholder="Password">
-  <button onclick="login()">Login / Register</button>
+  <input id="userName" placeholder="Your Name">
+  <input id="userEmail" placeholder="Your Email">
+  <button onclick="login()">Login</button>
 </div>
 
 <!-- GROUP -->
 <div class="container hidden" id="groupBox">
-  <h2>Create or Join Group</h2>
-  <input id="groupName" placeholder="New Group Name">
+  <h2>Create / Join Trip</h2>
+  <input id="groupName" placeholder="Trip / Group Name">
   <button onclick="createGroup()">Create Group</button>
   <hr>
-  <input id="inviteCode" placeholder="Invite Code">
+  <input id="inviteInput" placeholder="Paste Invite Link">
   <button onclick="joinGroup()">Join Group</button>
 </div>
 
@@ -52,37 +47,49 @@ th, td { border:1px solid #ccc; padding:8px; text-align:center }
   <button class="logout" onclick="logout()">Logout</button>
 
   <div class="info">
-    <p><b>Logged in as:</b> <span id="userEmail"></span></p>
-    <p><b>Group name:</b> <span id="groupTitle"></span></p>
+    <p><b>Group:</b> <span id="groupTitle"></span></p>
+    <p><b>Logged in:</b> <span id="loggedUser"></span></p>
+    <p><b>Invite Link:</b></p>
+    <input id="inviteLink" readonly>
   </div>
 
+  <!-- MEMBERS -->
+  <h3>Group Members</h3>
+  <input id="newMember" placeholder="Add member name">
+  <button onclick="addMember()">Add Member</button>
+  <div id="memberList"></div>
+
+  <!-- EXPENSE -->
   <h3>Add Expense</h3>
+  <select id="spentBy"></select>
   <input id="amount" placeholder="Amount">
   <input id="place" placeholder="Where spent">
-  <input id="reason" placeholder="Reason / Purpose">
+  <input id="reason" placeholder="Reason / For what">
   <input type="date" id="date">
   <button onclick="addExpense()">Add Expense</button>
 
+  <!-- HISTORY -->
   <h3>Expense History</h3>
   <table>
     <thead>
       <tr>
-        <th>Who</th>
+        <th>Spent By</th>
+        <th>Entered By</th>
         <th>Amount</th>
         <th>Where</th>
         <th>Reason</th>
         <th>Date</th>
-        <th>Added At</th>
       </tr>
     </thead>
     <tbody id="expenseTable"></tbody>
   </table>
 
+  <!-- SUMMARY -->
   <h3>Settlement Summary</h3>
   <table>
     <thead>
       <tr>
-        <th>User</th>
+        <th>Name</th>
         <th>Total Paid</th>
         <th>Balance</th>
       </tr>
@@ -91,7 +98,7 @@ th, td { border:1px solid #ccc; padding:8px; text-align:center }
   </table>
 
   <button style="background:#16a34a;margin-top:15px" onclick="downloadPDF()">
-    End Split & Download Detailed PDF
+    End Split & Download Report
   </button>
 
   <h3>Audit Trail</h3>
@@ -99,167 +106,157 @@ th, td { border:1px solid #ccc; padding:8px; text-align:center }
 </div>
 
 <script>
-/* ================= FIREBASE ================= */
-
-const firebaseConfig = {
-  apiKey: "AIzaSyD8ageJ9iu3tGyS4-9VZD2D7wPXoU9Epxc",
-  authDomain: "split-a4ba5.firebaseapp.com",
-  projectId: "split-a4ba5",
-  storageBucket: "split-a4ba5.firebasestorage.app",
-  messagingSenderId: "511024932142",
-  appId: "1:511024932142:web:936a3c580ca3616854c6bf"
-};
-
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
-
 let currentUser = null;
 let currentGroupId = null;
+let groups = JSON.parse(localStorage.getItem("groups")) || {};
 
-/* ================= AUTH ================= */
-
-auth.onAuthStateChanged(user => {
-  loginBox.classList.add("hidden");
-  groupBox.classList.add("hidden");
-  appBox.classList.add("hidden");
-
-  if (!user) {
-    loginBox.classList.remove("hidden");
-  } else {
-    currentUser = user.email;
-    userEmail.innerText = currentUser;
-    groupBox.classList.remove("hidden");
-  }
-});
-
+/* LOGIN */
 function login() {
-  auth.signInWithEmailAndPassword(email.value, password.value)
-    .catch(() => auth.createUserWithEmailAndPassword(email.value, password.value));
+  if (!userName.value || !userEmail.value) return alert("Enter name and email");
+  currentUser = { name: userName.value, email: userEmail.value };
+  localStorage.setItem("currentUser", JSON.stringify(currentUser));
+  loginBox.classList.add("hidden");
+  groupBox.classList.remove("hidden");
 }
 
-function logout() {
-  auth.signOut();
-}
-
-/* ================= GROUP ================= */
-
+/* GROUP */
 function createGroup() {
-  const id = Math.random().toString(36).substring(2,8);
-  db.collection("groups").doc(id).set({
+  currentGroupId = "grp_" + Date.now();
+  groups[currentGroupId] = {
     name: groupName.value,
-    members: [currentUser],
-    createdAt: new Date()
-  }).then(() => openGroup(id));
+    members: [currentUser.name],
+    expenses: [],
+    audit: []
+  };
+  save(); openGroup();
 }
 
 function joinGroup() {
-  openGroup(inviteCode.value);
+  const id = new URL(inviteInput.value).searchParams.get("group");
+  if (!groups[id]) {
+    groups[id] = { name:"Joined Group", members:[currentUser.name], expenses:[], audit:[] };
+  }
+  currentGroupId = id; save(); openGroup();
 }
 
-function openGroup(id) {
-  currentGroupId = id;
+function openGroup() {
   groupBox.classList.add("hidden");
   appBox.classList.remove("hidden");
 
-  const ref = db.collection("groups").doc(id);
+  groupTitle.innerText = groups[currentGroupId].name;
+  loggedUser.innerText = currentUser.name;
+  inviteLink.value = location.origin + location.pathname + "?group=" + currentGroupId;
 
-  ref.update({
-    members: firebase.firestore.FieldValue.arrayUnion(currentUser)
-  });
-
-  ref.onSnapshot(doc => {
-    if (doc.exists) {
-      groupTitle.innerText = doc.data().name;
-    }
-  });
-
-  loadExpenses();
+  refreshMembers();
+  render();
 }
 
-/* ================= EXPENSE ================= */
+/* MEMBERS */
+function addMember() {
+  const name = newMember.value.trim();
+  if (!name) return;
+  if (!groups[currentGroupId].members.includes(name)) {
+    groups[currentGroupId].members.push(name);
+    groups[currentGroupId].audit.push(
+      `${new Date().toLocaleString()} – ${currentUser.name} added member ${name}`
+    );
+  }
+  newMember.value = "";
+  save(); refreshMembers(); render();
+}
 
+function refreshMembers() {
+  memberList.innerHTML = "";
+  spentBy.innerHTML = "";
+
+  groups[currentGroupId].members.forEach(m => {
+    memberList.innerHTML += `<span class="member-tag">${m}</span>`;
+    spentBy.innerHTML += `<option>${m}</option>`;
+  });
+}
+
+/* EXPENSE */
 function addExpense() {
   if (!amount.value || !place.value || !reason.value || !date.value)
     return alert("Fill all fields");
 
-  db.collection("groups").doc(currentGroupId)
-    .collection("expenses")
-    .add({
-      who: currentUser,
-      amount: Number(amount.value),
-      where: place.value,
-      reason: reason.value,
-      spentOn: date.value,
-      createdAt: new Date()
-    });
-
-  db.collection("groups").doc(currentGroupId)
-    .collection("audit")
-    .add({
-      text: `${currentUser} added ₹${amount.value} for ${reason.value}`,
-      time: new Date()
-    });
-
-  amount.value = place.value = reason.value = "";
-}
-
-function loadExpenses() {
-  const expRef = db.collection("groups").doc(currentGroupId).collection("expenses");
-  const auditRef = db.collection("groups").doc(currentGroupId).collection("audit");
-
-  expRef.onSnapshot(snap => {
-    expenseTable.innerHTML = "";
-    let paid = {};
-    let users = [];
-
-    snap.forEach(doc => {
-      const e = doc.data();
-      expenseTable.innerHTML += `
-        <tr>
-          <td>${e.who}</td>
-          <td>₹${e.amount}</td>
-          <td>${e.where}</td>
-          <td>${e.reason}</td>
-          <td>${e.spentOn}</td>
-          <td>${e.createdAt.toDate().toLocaleString()}</td>
-        </tr>`;
-      paid[e.who] = (paid[e.who] || 0) + e.amount;
-      if (!users.includes(e.who)) users.push(e.who);
-    });
-
-    const total = Object.values(paid).reduce((a,b)=>a+b,0);
-    const share = users.length ? total / users.length : 0;
-
-    summaryTable.innerHTML = "";
-    users.forEach(u => {
-      const bal = paid[u] - share;
-      summaryTable.innerHTML += `
-        <tr>
-          <td>${u}</td>
-          <td>₹${paid[u]}</td>
-          <td>${bal >= 0 ? "Gets" : "Owes"} ₹${Math.abs(bal).toFixed(2)}</td>
-        </tr>`;
-    });
+  groups[currentGroupId].expenses.push({
+    spentBy: spentBy.value,
+    enteredBy: currentUser.name,
+    amount: Number(amount.value),
+    where: place.value,
+    reason: reason.value,
+    date: date.value
   });
 
-  auditRef.onSnapshot(snap => {
-    auditLog.innerHTML = "";
-    snap.forEach(doc => {
-      auditLog.innerHTML += doc.data().text + "<br>";
-    });
-  });
+  groups[currentGroupId].audit.push(
+    `${new Date().toLocaleString()} – ${currentUser.name} added ₹${amount.value} spent by ${spentBy.value}`
+  );
+
+  save(); render();
 }
 
-/* ================= PDF ================= */
+/* RENDER */
+function render() {
+  expenseTable.innerHTML = "";
+  auditLog.innerHTML = "";
 
+  let paid = {};
+  groups[currentGroupId].members.forEach(m => paid[m] = 0);
+
+  groups[currentGroupId].expenses.forEach(e => {
+    expenseTable.innerHTML += `
+      <tr>
+        <td>${e.spentBy}</td>
+        <td>${e.enteredBy}</td>
+        <td>₹${e.amount}</td>
+        <td>${e.where}</td>
+        <td>${e.reason}</td>
+        <td>${e.date}</td>
+      </tr>`;
+    paid[e.spentBy] += e.amount;
+  });
+
+  const total = Object.values(paid).reduce((a,b)=>a+b,0);
+  const share = total / groups[currentGroupId].members.length;
+
+  summaryTable.innerHTML = "";
+  Object.keys(paid).forEach(u => {
+    const bal = paid[u] - share;
+    summaryTable.innerHTML += `
+      <tr>
+        <td>${u}</td>
+        <td>₹${paid[u]}</td>
+        <td>${bal>=0?"Gets":"Owes"} ₹${Math.abs(bal).toFixed(2)}</td>
+      </tr>`;
+  });
+
+  groups[currentGroupId].audit.forEach(a => auditLog.innerHTML += a + "<br>");
+}
+
+/* PDF */
 function downloadPDF() {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
-  pdf.text("Expense Split Detailed Report", 10, 10);
-  pdf.text("Group: " + groupTitle.innerText, 10, 20);
-  pdf.text("Generated by: " + currentUser, 10, 30);
-  pdf.save("expense-split-detailed-report.pdf");
+  pdf.text("Expense Split Report",10,10);
+  pdf.text("Group: " + groups[currentGroupId].name,10,20);
+  pdf.save("expense-split-report.pdf");
+}
+
+/* INIT */
+const savedUser = JSON.parse(localStorage.getItem("currentUser"));
+const params = new URLSearchParams(location.search);
+if (savedUser) { currentUser = savedUser; loginBox.classList.add("hidden"); groupBox.classList.remove("hidden"); }
+if (params.get("group")) {
+  currentGroupId = params.get("group");
+  if (!groups[currentGroupId]) {
+    groups[currentGroupId] = { name:"Shared Group", members:[currentUser.name], expenses:[], audit:[] };
+  }
+  save(); openGroup();
+}
+
+function save() {
+  localStorage.setItem("groups", JSON.stringify(groups));
 }
 </script>
 
