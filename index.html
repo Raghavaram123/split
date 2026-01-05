@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>Expense Split App</title>
 
-<!-- Firebase SDKs (Compat – best for GitHub Pages) -->
+<!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -14,23 +14,24 @@
 
 <style>
 body { font-family: Arial; background:#f4f6f8 }
-.container { max-width:950px; margin:auto; background:white; padding:20px; margin-top:25px; border-radius:8px }
+.container { max-width:1000px; margin:auto; background:white; padding:20px; margin-top:25px; border-radius:8px }
 input, button { width:100%; padding:8px; margin-top:6px }
 button { background:#2563eb; color:white; border:none; cursor:pointer }
 button:hover { background:#1e40af }
 .hidden { display:none }
 table { width:100%; border-collapse:collapse; margin-top:15px }
-th,td { border:1px solid #ccc; padding:8px; text-align:center }
+th, td { border:1px solid #ccc; padding:8px; text-align:center }
 .audit { font-size:13px; color:#555 }
 .logout { background:#999; float:right }
+.info { background:#eef; padding:10px; border-radius:6px }
 </style>
 </head>
 
 <body>
 
 <!-- LOGIN -->
-<div class="container" id="authBox">
-  <h2>Login / Register</h2>
+<div class="container" id="loginBox">
+  <h2>Login</h2>
   <input id="email" placeholder="Email">
   <input id="password" type="password" placeholder="Password">
   <button onclick="login()">Login / Register</button>
@@ -38,7 +39,7 @@ th,td { border:1px solid #ccc; padding:8px; text-align:center }
 
 <!-- GROUP -->
 <div class="container hidden" id="groupBox">
-  <h2>Create or Join Trip / Group</h2>
+  <h2>Create or Join Group</h2>
   <input id="groupName" placeholder="New Group Name">
   <button onclick="createGroup()">Create Group</button>
   <hr>
@@ -49,18 +50,20 @@ th,td { border:1px solid #ccc; padding:8px; text-align:center }
 <!-- APP -->
 <div class="container hidden" id="appBox">
   <button class="logout" onclick="logout()">Logout</button>
-  <h2>Expense Split</h2>
-  <p><b>Group:</b> <span id="gName"></span></p>
-  <p><b>User:</b> <span id="uName"></span></p>
+
+  <div class="info">
+    <p><b>Logged in as:</b> <span id="userEmail"></span></p>
+    <p><b>Group name:</b> <span id="groupTitle"></span></p>
+  </div>
 
   <h3>Add Expense</h3>
   <input id="amount" placeholder="Amount">
   <input id="place" placeholder="Where spent">
-  <input id="reason" placeholder="Reason / For what">
+  <input id="reason" placeholder="Reason / Purpose">
   <input type="date" id="date">
   <button onclick="addExpense()">Add Expense</button>
 
-  <h3>Expenses</h3>
+  <h3>Expense History</h3>
   <table>
     <thead>
       <tr>
@@ -68,7 +71,8 @@ th,td { border:1px solid #ccc; padding:8px; text-align:center }
         <th>Amount</th>
         <th>Where</th>
         <th>Reason</th>
-        <th>When</th>
+        <th>Date</th>
+        <th>Added At</th>
       </tr>
     </thead>
     <tbody id="expenseTable"></tbody>
@@ -78,8 +82,8 @@ th,td { border:1px solid #ccc; padding:8px; text-align:center }
   <table>
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Paid</th>
+        <th>User</th>
+        <th>Total Paid</th>
         <th>Balance</th>
       </tr>
     </thead>
@@ -87,7 +91,7 @@ th,td { border:1px solid #ccc; padding:8px; text-align:center }
   </table>
 
   <button style="background:#16a34a;margin-top:15px" onclick="downloadPDF()">
-    End Split & Download PDF
+    End Split & Download Detailed PDF
   </button>
 
   <h3>Audit Trail</h3>
@@ -95,7 +99,7 @@ th,td { border:1px solid #ccc; padding:8px; text-align:center }
 </div>
 
 <script>
-/* ================= FIREBASE INIT ================= */
+/* ================= FIREBASE ================= */
 
 const firebaseConfig = {
   apiKey: "AIzaSyD8ageJ9iu3tGyS4-9VZD2D7wPXoU9Epxc",
@@ -110,31 +114,32 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-/* ================= STATE ================= */
-
 let currentUser = null;
 let currentGroupId = null;
 
 /* ================= AUTH ================= */
 
 auth.onAuthStateChanged(user => {
-  if (user) {
+  loginBox.classList.add("hidden");
+  groupBox.classList.add("hidden");
+  appBox.classList.add("hidden");
+
+  if (!user) {
+    loginBox.classList.remove("hidden");
+  } else {
     currentUser = user.email;
-    authBox.classList.add("hidden");
+    userEmail.innerText = currentUser;
     groupBox.classList.remove("hidden");
   }
 });
 
 function login() {
   auth.signInWithEmailAndPassword(email.value, password.value)
-    .catch(() =>
-      auth.createUserWithEmailAndPassword(email.value, password.value)
-    );
+    .catch(() => auth.createUserWithEmailAndPassword(email.value, password.value));
 }
 
 function logout() {
   auth.signOut();
-  location.reload();
 }
 
 /* ================= GROUP ================= */
@@ -145,8 +150,7 @@ function createGroup() {
     name: groupName.value,
     members: [currentUser],
     createdAt: new Date()
-  });
-  openGroup(id);
+  }).then(() => openGroup(id));
 }
 
 function joinGroup() {
@@ -157,21 +161,23 @@ function openGroup(id) {
   currentGroupId = id;
   groupBox.classList.add("hidden");
   appBox.classList.remove("hidden");
-  uName.innerText = currentUser;
 
   const ref = db.collection("groups").doc(id);
+
   ref.update({
     members: firebase.firestore.FieldValue.arrayUnion(currentUser)
   });
 
   ref.onSnapshot(doc => {
-    gName.innerText = doc.data().name;
+    if (doc.exists) {
+      groupTitle.innerText = doc.data().name;
+    }
   });
 
   loadExpenses();
 }
 
-/* ================= EXPENSES ================= */
+/* ================= EXPENSE ================= */
 
 function addExpense() {
   if (!amount.value || !place.value || !reason.value || !date.value)
@@ -184,8 +190,8 @@ function addExpense() {
       amount: Number(amount.value),
       where: place.value,
       reason: reason.value,
-      when: date.value,
-      timestamp: new Date()
+      spentOn: date.value,
+      createdAt: new Date()
     });
 
   db.collection("groups").doc(currentGroupId)
@@ -215,7 +221,8 @@ function loadExpenses() {
           <td>₹${e.amount}</td>
           <td>${e.where}</td>
           <td>${e.reason}</td>
-          <td>${e.when}</td>
+          <td>${e.spentOn}</td>
+          <td>${e.createdAt.toDate().toLocaleString()}</td>
         </tr>`;
       paid[e.who] = (paid[e.who] || 0) + e.amount;
       if (!users.includes(e.who)) users.push(e.who);
@@ -231,7 +238,7 @@ function loadExpenses() {
         <tr>
           <td>${u}</td>
           <td>₹${paid[u]}</td>
-          <td>${bal>=0?"Gets":"Owes"} ₹${Math.abs(bal).toFixed(2)}</td>
+          <td>${bal >= 0 ? "Gets" : "Owes"} ₹${Math.abs(bal).toFixed(2)}</td>
         </tr>`;
     });
   });
@@ -249,9 +256,10 @@ function loadExpenses() {
 function downloadPDF() {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
-  pdf.text("Expense Split Report",10,10);
-  pdf.text("Group ID: " + currentGroupId,10,20);
-  pdf.save("expense-split-report.pdf");
+  pdf.text("Expense Split Detailed Report", 10, 10);
+  pdf.text("Group: " + groupTitle.innerText, 10, 20);
+  pdf.text("Generated by: " + currentUser, 10, 30);
+  pdf.save("expense-split-detailed-report.pdf");
 }
 </script>
 
